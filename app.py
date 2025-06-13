@@ -12,7 +12,7 @@ OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 @app.route('/')
 def home():
-    return "✅ Askely - Agent IA de conciergerie internationale est en ligne."
+    return "✅ Askely - Concierge IA intelligent est prêt."
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -41,8 +41,8 @@ def handle_message(message):
         return suggest_hotels(city)
     elif "restaurant" in message_lower:
         return suggest_restaurants(city)
-    elif "circuit" in message_lower or "touristique" in message_lower:
-        return suggest_tours(city)
+    elif "circuit" in message_lower or "touristique" in message_lower or "budget" in message_lower:
+        return ask_gpt(message, city)  # GPT s'occupe du circuit + budget
     else:
         return ask_gpt(message, city)
 
@@ -51,8 +51,8 @@ def extract_city(message):
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "Tu es un assistant de conciergerie expert qui identifie la ville mentionnée dans une phrase."},
-                {"role": "user", "content": f"Dans ce message, quelle est la ville : '{message}' ? Réponds uniquement par le nom de la ville."}
+                {"role": "system", "content": "Tu es un assistant de conciergerie expert. Donne uniquement le nom de la ville mentionnée dans ce message."},
+                {"role": "user", "content": f"{message}"}
             ]
         )
         return response.choices[0].message['content'].strip()
@@ -69,21 +69,23 @@ def get_weather(city):
     return f"🌤️ À {city}, il fait {temp}°C avec {weather}."
 
 def suggest_hotels(city):
-    return f"🏨 En tant que concierge, voici des hôtels populaires à {city} : The Grand Palace, Hôtel Central, ou Boutique Inn."
+    return f"🏨 Hôtels recommandés à {city} : The Grand Palace, Hôtel Central, Boutique Inn."
 
 def suggest_restaurants(city):
-    return f"🍽️ Voici quelques restaurants bien notés à {city} : Le Gourmet, Casa Delice, ou Street Bites."
-
-def suggest_tours(city):
-    return f"🗺️ Circuits touristiques à {city} : Visite de la vieille ville, excursions locales, musées incontournables, et activités culturelles."
+    return f"🍽️ Restaurants populaires à {city} : Le Gourmet, Casa Delice, Street Bites."
 
 def ask_gpt(message, city):
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "Tu es Askely, un expert en conciergerie de luxe. Tu aides les voyageurs à découvrir hôtels, restaurants, circuits et bons plans selon la ville donnée."},
-                {"role": "user", "content": f"Ville : {city}. Message : {message}"}
+                {"role": "system", "content": (
+                    "Tu es Askely, un agent de conciergerie intelligent. "
+                    "Ta mission est d'aider les utilisateurs à organiser leurs séjours dans n'importe quelle ville du monde. "
+                    "Tu peux proposer des circuits touristiques détaillés (jours, activités, lieux à visiter) "
+                    "et aussi donner un budget estimatif (hébergement, repas, transport, activités) pour leur voyage."
+                )},
+                {"role": "user", "content": f"Ville : {city}. Demande : {message}"}
             ]
         )
         return response.choices[0].message['content']
