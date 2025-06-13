@@ -12,7 +12,7 @@ OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 @app.route('/')
 def home():
-    return "✅ Askely - Concierge IA mondial (circuits & budget)"
+    return "✅ Askely - Concierge IA mondial (voyage, circuits, budget, bagages)"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -36,11 +36,12 @@ def askely_reply(message):
             model="gpt-4",
             messages=[
                 {"role": "system", "content": (
-                    "Tu es Askely, un agent de conciergerie intelligent, expert en voyages. "
-                    "Tu aides les utilisateurs à organiser des séjours dans n'importe quelle ville du monde. "
-                    "Tu peux proposer des circuits touristiques détaillés (jours, activités, lieux à visiter), "
-                    "et élaborer un budget estimatif (hébergement, repas, transport, activités). "
-                    "Réponds clairement même si la question est courte. Sois pro, rapide, et pratique."
+                    "Tu es Askely, un agent intelligent spécialisé en conciergerie de voyage. "
+                    "Tu aides les utilisateurs à organiser leurs séjours dans n'importe quelle ville du monde. "
+                    "Tu proposes des circuits touristiques détaillés (jours, lieux, activités), des budgets estimatifs (hébergement, repas, transport, activités), "
+                    "des recommandations d'hôtels et restaurants, la météo locale. "
+                    "Tu assistes aussi les utilisateurs en cas de bagages perdus à l'aéroport : tu expliques les étapes à suivre, "
+                    "proposes un exemple de réclamation, donnes les bons réflexes et adresses utiles."
                 )},
                 {"role": "user", "content": message}
             ]
