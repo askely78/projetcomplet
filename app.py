@@ -1,11 +1,12 @@
 from flask import Flask, request, jsonify
+from twilio.twiml.messaging_response import MessagingResponse
 import openai
 import requests
 import os
 
 app = Flask(__name__)
 
-# Clés API
+# Configuration des clés API
 openai.api_key = os.getenv("OPENAI_API_KEY")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
@@ -21,9 +22,17 @@ def webhook():
 
 @app.route('/webhook/whatsapp', methods=['POST'])
 def whatsapp_webhook():
-    data = request.get_json()
-    message = data.get('message', '')
-    return jsonify({"reply": handle_message(message)})
+    # Twilio envoie les données via form-urlencoded
+    message = request.form.get('Body', '')
+    sender = request.form.get('From', '')
+    
+    # Traitement de la réponse
+    reply = handle_message(message)
+
+    # Créer une réponse TwiML
+    response = MessagingResponse()
+    response.message(reply)
+    return str(response)
 
 def handle_message(message):
     message = message.lower()
@@ -60,7 +69,7 @@ def ask_gpt(message):
         )
         return response.choices[0].message['content']
     except Exception as e:
-        return f"❌ Erreur avec l'intelligence artificielle : {str(e)}"
+        return f"❌ Erreur avec l'IA : {str(e)}"
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
