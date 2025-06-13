@@ -6,13 +6,13 @@ import os
 
 app = Flask(__name__)
 
-# Nouvelle API OpenAI (v1.x)
-client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Configuration clés API
+openai.api_key = os.getenv("OPENAI_API_KEY")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 @app.route('/')
 def home():
-    return "✅ Askely Agent is running (OpenAI v1.x)."
+    return "✅ Askely Agent is running (GPT-4, extraction de ville activée)."
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -32,21 +32,38 @@ def whatsapp_webhook():
     return str(response)
 
 def handle_message(message):
-    message = message.lower()
-    if "météo" in message:
-        return get_weather("Marrakech")
-    elif "hôtel" in message:
-        return suggest_hotels("Marrakech")
-    elif "restaurant" in message:
-        return suggest_restaurants("Marrakech")
+    message_lower = message.lower()
+    city = extract_city(message)
+
+    if "météo" in message_lower:
+        return get_weather(city)
+    elif "hôtel" in message_lower:
+        return suggest_hotels(city)
+    elif "restaurant" in message_lower:
+        return suggest_restaurants(city)
+    elif "circuit" in message_lower or "touristique" in message_lower:
+        return suggest_tours(city)
     else:
         return ask_gpt(message)
+
+def extract_city(message):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Tu es un assistant qui extrait le nom de la ville mentionnée dans une phrase."},
+                {"role": "user", "content": f"Extrait la ville de ce message : '{message}'"}
+            ]
+        )
+        return response.choices[0].message['content'].strip()
+    except Exception:
+        return "Marrakech"  # valeur par défaut
 
 def get_weather(city):
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric&lang=fr"
     response = requests.get(url).json()
     if response.get("cod") != 200:
-        return "❌ Je ne peux pas récupérer la météo pour cette ville."
+        return f"❌ Impossible de récupérer la météo pour {city}."
     weather = response["weather"][0]["description"]
     temp = response["main"]["temp"]
     return f"🌤️ À {city}, il fait {temp}°C avec {weather}."
@@ -57,13 +74,16 @@ def suggest_hotels(city):
 def suggest_restaurants(city):
     return f"🍽️ Suggestions de restaurants à {city} : Dar Yacout, Le Tobsil, Al Fassia."
 
+def suggest_tours(city):
+    return f"🗺️ Circuits touristiques à {city} : Visite guidée de la médina, excursions dans les environs, marchés locaux."
+
 def ask_gpt(message):
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
             messages=[{"role": "user", "content": message}]
         )
-        return response.choices[0].message.content
+        return response.choices[0].message['content']
     except Exception as e:
         return f"❌ Erreur avec GPT : {str(e)}"
 
