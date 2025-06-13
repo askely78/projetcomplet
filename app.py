@@ -6,13 +6,13 @@ import os
 
 app = Flask(__name__)
 
-# Configuration des clés API
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Nouvelle API OpenAI (v1.x)
+client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 @app.route('/')
 def home():
-    return "✅ Askely Agent is running."
+    return "✅ Askely Agent is running (OpenAI v1.x)."
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -22,21 +22,17 @@ def webhook():
 
 @app.route('/webhook/whatsapp', methods=['POST'])
 def whatsapp_webhook():
-    # Twilio envoie les données via form-urlencoded
     message = request.form.get('Body', '')
     sender = request.form.get('From', '')
     
-    # Traitement de la réponse
     reply = handle_message(message)
 
-    # Créer une réponse TwiML
     response = MessagingResponse()
     response.message(reply)
     return str(response)
 
 def handle_message(message):
     message = message.lower()
-
     if "météo" in message:
         return get_weather("Marrakech")
     elif "hôtel" in message:
@@ -63,13 +59,13 @@ def suggest_restaurants(city):
 
 def ask_gpt(message):
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": message}]
         )
-        return response.choices[0].message['content']
+        return response.choices[0].message.content
     except Exception as e:
-        return f"❌ Erreur avec l'IA : {str(e)}"
+        return f"❌ Erreur avec GPT : {str(e)}"
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
