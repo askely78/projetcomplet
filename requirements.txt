@@ -1,5 +1,5 @@
 
 flask
-openai
 requests
 twilio
+openai>=1.3.0
