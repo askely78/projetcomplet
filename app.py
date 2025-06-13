@@ -6,13 +6,13 @@ import os
 
 app = Flask(__name__)
 
-# Configuration clés API
+# Configuration des clés API
 openai.api_key = os.getenv("OPENAI_API_KEY")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 @app.route('/')
 def home():
-    return "✅ Askely Agent is running (GPT-4, extraction de ville activée)."
+    return "✅ Askely - Agent IA de conciergerie internationale est en ligne."
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -44,20 +44,20 @@ def handle_message(message):
     elif "circuit" in message_lower or "touristique" in message_lower:
         return suggest_tours(city)
     else:
-        return ask_gpt(message)
+        return ask_gpt(message, city)
 
 def extract_city(message):
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "Tu es un assistant qui extrait le nom de la ville mentionnée dans une phrase."},
-                {"role": "user", "content": f"Extrait la ville de ce message : '{message}'"}
+                {"role": "system", "content": "Tu es un assistant de conciergerie expert qui identifie la ville mentionnée dans une phrase."},
+                {"role": "user", "content": f"Dans ce message, quelle est la ville : '{message}' ? Réponds uniquement par le nom de la ville."}
             ]
         )
         return response.choices[0].message['content'].strip()
     except Exception:
-        return "Marrakech"  # valeur par défaut
+        return "Paris"
 
 def get_weather(city):
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric&lang=fr"
@@ -69,19 +69,22 @@ def get_weather(city):
     return f"🌤️ À {city}, il fait {temp}°C avec {weather}."
 
 def suggest_hotels(city):
-    return f"🏨 Suggestions d'hôtels à {city} : Hôtel Atlas, Riad Bahia, Hôtel Oasis."
+    return f"🏨 En tant que concierge, voici des hôtels populaires à {city} : The Grand Palace, Hôtel Central, ou Boutique Inn."
 
 def suggest_restaurants(city):
-    return f"🍽️ Suggestions de restaurants à {city} : Dar Yacout, Le Tobsil, Al Fassia."
+    return f"🍽️ Voici quelques restaurants bien notés à {city} : Le Gourmet, Casa Delice, ou Street Bites."
 
 def suggest_tours(city):
-    return f"🗺️ Circuits touristiques à {city} : Visite guidée de la médina, excursions dans les environs, marchés locaux."
+    return f"🗺️ Circuits touristiques à {city} : Visite de la vieille ville, excursions locales, musées incontournables, et activités culturelles."
 
-def ask_gpt(message):
+def ask_gpt(message, city):
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4",
-            messages=[{"role": "user", "content": message}]
+            messages=[
+                {"role": "system", "content": "Tu es Askely, un expert en conciergerie de luxe. Tu aides les voyageurs à découvrir hôtels, restaurants, circuits et bons plans selon la ville donnée."},
+                {"role": "user", "content": f"Ville : {city}. Message : {message}"}
+            ]
         )
         return response.choices[0].message['content']
     except Exception as e:
