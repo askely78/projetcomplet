@@ -5,7 +5,8 @@ import os
 import hashlib
 import uuid
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone  # ✅ CORRECTED
+
 import re
 
 app = Flask(__name__)
@@ -46,12 +47,12 @@ def create_user_profile(phone_number, country="unknown", language="unknown"):
     cursor.execute("""
         INSERT INTO users (id, phone_hash, country, language, points, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
-    """, (user_id, phone_hash, country, language, 0, datetime.utcnow()))
+    """, (user_id, phone_hash, country, language, 0, datetime.now(timezone.utc)))  # ✅ CORRECTED
     conn.commit()
     conn.close()
     return user_id
 
-# Fonctions de service simulées
+# Fonctions simulées
 def search_hotels(city):
     return f"🏨 Hôtels populaires à {city} :\n1. Atlas Hotel\n2. Riad Medina\n3. Comfort Inn {city}"
 
@@ -63,7 +64,7 @@ def search_restaurants(city, cuisine=None):
 def search_flights(origin, destination):
     return f"✈️ Vols de {origin} vers {destination} :\n1. Air Maroc - 08h45\n2. Ryanair - 12h15\n3. Transavia - 18h30"
 
-# Webhook WhatsApp
+# Webhook principal
 @app.route("/webhook/whatsapp-webhook", methods=["POST"])
 def whatsapp_webhook():
     incoming_msg = request.values.get("Body", "").strip()
@@ -120,7 +121,7 @@ def whatsapp_webhook():
     resp.message(f"[ID : {user_id}]\n{answer}")
     return str(resp)
 
-# Lancement compatible Render
+# Lancement Render
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 10000))
