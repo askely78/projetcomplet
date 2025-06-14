@@ -5,14 +5,13 @@ import os
 import hashlib
 import uuid
 import sqlite3
-from datetime import datetime, timezone  # ✅ CORRECTED
-
+from datetime import datetime, timezone
 import re
 
 app = Flask(__name__)
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Initialisation de la base de données
+# === Initialisation base de données
 def init_db():
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
@@ -29,11 +28,10 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Hash sécurisé du numéro de téléphone
+# === Fonctions utilisateur
 def hash_phone_number(phone_number):
     return hashlib.sha256(phone_number.encode()).hexdigest()
 
-# Création de profil utilisateur sécurisé
 def create_user_profile(phone_number, country="unknown", language="unknown"):
     phone_hash = hash_phone_number(phone_number)
     conn = sqlite3.connect("askely.db")
@@ -47,12 +45,23 @@ def create_user_profile(phone_number, country="unknown", language="unknown"):
     cursor.execute("""
         INSERT INTO users (id, phone_hash, country, language, points, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
-    """, (user_id, phone_hash, country, language, 0, datetime.now(timezone.utc)))  # ✅ CORRECTED
+    """, (user_id, phone_hash, country, language, 0, datetime.now(timezone.utc)))
     conn.commit()
     conn.close()
     return user_id
 
-# Fonctions simulées
+def add_points_to_user(phone_number, points=1):
+    phone_hash = hash_phone_number(phone_number)
+    conn = sqlite3.connect("askely.db")
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET points = points + ? WHERE phone_hash = ?", (points, phone_hash))
+    cursor.execute("SELECT points FROM users WHERE phone_hash = ?", (phone_hash,))
+    new_points = cursor.fetchone()[0]
+    conn.commit()
+    conn.close()
+    return new_points
+
+# === Fonctions de recherche et assistance
 def search_hotels(city):
     return f"🏨 Hôtels populaires à {city} :\n1. Atlas Hotel\n2. Riad Medina\n3. Comfort Inn {city}"
 
@@ -64,46 +73,103 @@ def search_restaurants(city, cuisine=None):
 def search_flights(origin, destination):
     return f"✈️ Vols de {origin} vers {destination} :\n1. Air Maroc - 08h45\n2. Ryanair - 12h15\n3. Transavia - 18h30"
 
-# Webhook principal
+def generate_baggage_claim():
+    return (
+        "📄 Exemple de réclamation bagage :\n"
+        "Madame, Monsieur,\nSuite à mon vol, mon bagage a été perdu/endommagé. "
+        "Je vous prie de bien vouloir traiter cette réclamation conformément à la convention de Montréal.\n"
+        "Cordialement,\nNom Prénom"
+    )
+
+def generate_travel_plan(city):
+    return (
+        f"🗺️ Plan de voyage à {city} sur 3 jours :\n"
+        "- Jour 1 : visite de la médina et souks\n"
+        "- Jour 2 : musées, monuments et jardins\n"
+        "- Jour 3 : gastronomie locale et détente\n"
+        "Souhaitez-vous réserver une activité ou un guide local ?"
+    )
+
+def get_travel_deals(country):
+    return (
+        f"💡 Bons plans au {country.title()} :\n"
+        "- Réductions sur hôtels jusqu’à -30%\n"
+        "- Entrées gratuites pour certains musées\n"
+        "- Marchés artisanaux le week-end\n"
+        "- Carte SIM locale à petit prix\n"
+    )
+
+# === Webhook principal
 @app.route("/webhook/whatsapp-webhook", methods=["POST"])
 def whatsapp_webhook():
     incoming_msg = request.values.get("Body", "").strip()
     phone_number = request.values.get("From", "").replace("whatsapp:", "")
     country = request.values.get("WaId", "")[:2] if request.values.get("WaId") else "unknown"
     language = "auto"
-    user_id = create_user_profile(phone_number, country, language)
+    create_user_profile(phone_number, country, language)
 
     msg_lower = incoming_msg.lower()
 
-    # Recherche hôtel
+    # Hôtels
     match_hotel = re.search(r"h[oô]tel(?: à| a)? ([\w\s\-]+)", msg_lower)
     if match_hotel:
         city = match_hotel.group(1).strip().title()
         result = search_hotels(city)
+        points = add_points_to_user(phone_number, 1)
         resp = MessagingResponse()
-        resp.message(f"[ID : {user_id}]\n{result}")
+        resp.message(f"{result}\n🎁 Vous gagnez 1 point Askely ! Total : {points} ⭐️")
         return str(resp)
 
-    # Recherche restaurant
+    # Restaurants
     match_restaurant = re.search(r"restaurant(?: [\w]+)?(?: à| a)? ([\w\s\-]+)", msg_lower)
     if match_restaurant:
         city = match_restaurant.group(1).strip().title()
         result = search_restaurants(city)
+        points = add_points_to_user(phone_number, 1)
         resp = MessagingResponse()
-        resp.message(f"[ID : {user_id}]\n{result}")
+        resp.message(f"{result}\n🎁 Vous gagnez 1 point Askely ! Total : {points} ⭐️")
         return str(resp)
 
-    # Recherche vol
+    # Vols
     match_flight = re.search(r"vol(?: de)? ([\w\s]+) vers ([\w\s]+)", msg_lower)
     if match_flight:
         origin = match_flight.group(1).strip().title()
         destination = match_flight.group(2).strip().title()
         result = search_flights(origin, destination)
+        points = add_points_to_user(phone_number, 1)
         resp = MessagingResponse()
-        resp.message(f"[ID : {user_id}]\n{result}")
+        resp.message(f"{result}\n🎁 Vous gagnez 1 point Askely ! Total : {points} ⭐️")
         return str(resp)
 
-    # Sinon appel GPT
+    # Réclamation bagage
+    if "bagage" in msg_lower or "réclamation" in msg_lower:
+        result = generate_baggage_claim()
+        points = add_points_to_user(phone_number, 2)
+        resp = MessagingResponse()
+        resp.message(f"{result}\n🎁 Vous gagnez 2 points Askely ! Total : {points} ⭐️")
+        return str(resp)
+
+    # Plan de voyage
+    match_plan = re.search(r"(plan|itinéraire)(?: à| pour)? ([\w\s\-]+)", msg_lower)
+    if match_plan:
+        city = match_plan.group(2).strip().title()
+        result = generate_travel_plan(city)
+        points = add_points_to_user(phone_number, 2)
+        resp = MessagingResponse()
+        resp.message(f"{result}\n🎁 Vous gagnez 2 points Askely ! Total : {points} ⭐️")
+        return str(resp)
+
+    # Bons plans
+    match_deal = re.search(r"bons? plans? (?:au|en|dans le)? ([\w\s\-]+)", msg_lower)
+    if match_deal:
+        country = match_deal.group(1).strip().title()
+        result = get_travel_deals(country)
+        points = add_points_to_user(phone_number, 1)
+        resp = MessagingResponse()
+        resp.message(f"{result}\n🎁 Vous gagnez 1 point Askely ! Total : {points} ⭐️")
+        return str(resp)
+
+    # Sinon GPT
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4o",
@@ -117,11 +183,12 @@ def whatsapp_webhook():
     except Exception:
         answer = "❌ Erreur avec l'intelligence artificielle. Veuillez réessayer."
 
+    points = add_points_to_user(phone_number, 1)
     resp = MessagingResponse()
-    resp.message(f"[ID : {user_id}]\n{answer}")
+    resp.message(f"{answer}\n🎁 Vous gagnez 1 point Askely ! Total : {points} ⭐️")
     return str(resp)
 
-# Lancement Render
+# === Lancement Render
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 10000))
