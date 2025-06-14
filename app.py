@@ -102,11 +102,23 @@ def whatsapp_webhook():
     corrected_msg = corriger_message(incoming_msg)
     msg_lower = corrected_msg.lower()
 
+    # Affichage du profil directement dans WhatsApp
     if "mon profil" in msg_lower or "mes points" in msg_lower:
-        profil_url = f"https://projetcomplet.onrender.com/profil?tel={phone_number}"
-        points = add_points_to_user(phone_number, 0)
+        phone_hash = hash_phone_number(phone_number)
+        conn = sqlite3.connect("askely.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, points, created_at FROM users WHERE phone_hash = ?", (phone_hash,))
+        data = cursor.fetchone()
+        conn.close()
+
+        if data:
+            user_id, points, created_at = data
+            msg = f"👤 *Votre Profil Askely*\n🆔 ID : {user_id}\n⭐ Points : {points}\n📅 Inscrit le : {created_at[:10]}"
+        else:
+            msg = "Profil introuvable. Avez-vous déjà utilisé Askely ?"
+
         resp = MessagingResponse()
-        resp.message(f"👤 Voici votre profil Askely :\n{profil_url}\n\nVous avez actuellement ⭐ {points} points.")
+        resp.message(msg)
         return str(resp)
 
     match_hotel = re.search(r"h[oô]tel(?: à| a)? ([\w\s\-]+)", msg_lower)
@@ -179,35 +191,6 @@ def whatsapp_webhook():
     resp = MessagingResponse()
     resp.message(f"{answer}\n🎁 Vous gagnez 1 point Askely ! Total : {points} ⭐️")
     return str(resp)
-
-@app.route("/profil")
-def afficher_profil():
-    tel = request.args.get("tel")
-    if not tel:
-        return "❌ Veuillez fournir ?tel=NUMÉRO", 400
-
-    phone_hash = hash_phone_number(tel)
-    conn = sqlite3.connect("askely.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, points, created_at FROM users WHERE phone_hash = ?", (phone_hash,))
-    data = cursor.fetchone()
-    conn.close()
-
-    if not data:
-        return "❌ Utilisateur introuvable. Avez-vous utilisé Askely sur WhatsApp ?"
-
-    user_id, points, created_at = data
-
-    html = f"""
-    <html><head><title>Profil Askely</title></head>
-    <body style='font-family:sans-serif; text-align:center; padding:30px;'>
-        <h2>👤 Mon Profil Askely</h2>
-        <p><strong>ID :</strong> {user_id}</p>
-        <p><strong>Points :</strong> ⭐ {points} points</p>
-        <p><strong>Inscrit le :</strong> {created_at}</p>
-    </body></html>
-    """
-    return render_template_string(html)
 
 if __name__ == "__main__":
     init_db()
