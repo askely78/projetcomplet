@@ -61,6 +61,21 @@ def add_points_to_user(phone_number, points=1):
     conn.close()
     return new_points
 
+# === Correction automatique des fautes de frappe
+def corriger_message(msg):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Corrige les fautes de frappe et de grammaire dans ce message sans changer son sens."},
+                {"role": "user", "content": msg}
+            ],
+            max_tokens=100
+        )
+        return response.choices[0].message["content"]
+    except Exception:
+        return msg
+
 # === Fonctions de service
 def search_hotels(city):
     hotels = [
@@ -118,7 +133,8 @@ def whatsapp_webhook():
     language = "auto"
     create_user_profile(phone_number, country, language)
 
-    msg_lower = incoming_msg.lower()
+    corrected_msg = corriger_message(incoming_msg)
+    msg_lower = corrected_msg.lower()
 
     # Hôtels
     match_hotel = re.search(r"h[oô]tel(?: à| a)? ([\w\s\-]+)", msg_lower)
@@ -185,7 +201,7 @@ def whatsapp_webhook():
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": "Tu es Askely, un assistant de voyage intelligent, multilingue et serviable."},
-                {"role": "user", "content": incoming_msg}
+                {"role": "user", "content": corrected_msg}
             ],
             max_tokens=300
         )
@@ -198,7 +214,7 @@ def whatsapp_webhook():
     resp.message(f"{answer}\n🎁 Vous gagnez 1 point Askely ! Total : {points} ⭐️")
     return str(resp)
 
-# === 🚀 Lancement compatible Render (CORRECT)
+# === 🚀 Lancement compatible Render
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 10000))
