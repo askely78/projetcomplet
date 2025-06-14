@@ -61,9 +61,19 @@ def add_points_to_user(phone_number, points=1):
     conn.close()
     return new_points
 
-# === Fonctions de recherche et assistance
+# === Fonctions de service
 def search_hotels(city):
-    return f"🏨 Hôtels populaires à {city} :\n1. Atlas Hotel\n2. Riad Medina\n3. Comfort Inn {city}"
+    hotels = [
+        f"{city} Palace Hotel",
+        f"Riad {city} Medina",
+        f"Comfort Inn {city}",
+        f"Dar Atlas {city}",
+        f"Luxury Stay {city}"
+    ]
+    result = f"🏨 Hôtels recommandés à {city} :\n"
+    for i, name in enumerate(hotels, start=1):
+        result += f"{i}. {name}\n"
+    return result.strip()
 
 def search_restaurants(city, cuisine=None):
     if cuisine:
@@ -185,11 +195,3 @@ def whatsapp_webhook():
 
     points = add_points_to_user(phone_number, 1)
     resp = MessagingResponse()
-    resp.message(f"{answer}\n🎁 Vous gagnez 1 point Askely ! Total : {points} ⭐️")
-    return str(resp)
-
-# === Lancement Render
-if __name__ == "__main__":
-    init_db()
-    port = int(os.environ.get("PORT", 10000))
-    app.run(debug=True, host="0.0.0.0", port=port)
