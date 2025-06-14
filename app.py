@@ -1,75 +1,120 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 import openai
-import requests
 import os
+import hashlib
+import uuid
+import sqlite3
+from datetime import datetime
+import re
 
 app = Flask(__name__)
-
-# Configuration des clés API
 openai.api_key = os.getenv("OPENAI_API_KEY")
-OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
-@app.route('/')
-def home():
-    return "✅ Askely - Concierge IA (bagages, circuits, budget, météo, hôtels, restaurants)"
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    data = request.get_json()
-    message = data.get('message', '')
-    return jsonify({"reply": askely_reply(message)})
-
-@app.route('/webhook/whatsapp', methods=['POST'])
-def whatsapp_webhook():
-    message = request.form.get('Body', '')
-    sender = request.form.get('From', '')
-    reply = askely_reply(message)
-
-    response = MessagingResponse()
-    response.message(reply)
-    return str(response)
-
-def askely_reply(message):
-    message_lower = message.lower()
-
-    # 🎯 Réponse automatique pour bagage perdu
-    if any(word in message_lower for word in ["bagage", "valise", "aéroport", "perdu", "lost baggage"]):
-        return (
-            "🛄 *Assistance bagage perdu* :\n"
-            "1. Rendez-vous au comptoir 'Lost & Found' de votre compagnie ou de l'aéroport.\n"
-            "2. Remplissez un formulaire PIR (Property Irregularity Report).\n"
-            "3. Conservez votre ticket de bagage et carte d’embarquement.\n"
-            "4. Contactez leur service dans les 24h si aucune nouvelle.\n\n"
-            "📨 *Exemple de réclamation* :\n"
-            "Objet : Bagage perdu – Vol AT123 Casablanca → Paris\n"
-            "Madame, Monsieur,\n"
-            "Je vous contacte suite à la perte de ma valise enregistrée le 13 juin sur le vol AT123.\n"
-            "Merci de votre assistance."
+def init_db():
+    conn = sqlite3.connect("askely.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            phone_hash TEXT UNIQUE,
+            country TEXT,
+            language TEXT,
+            points INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
+    """)
+    conn.commit()
+    conn.close()
 
-    # Sinon, appel GPT pour conciergerie complète
+def hash_phone_number(phone_number):
+    return hashlib.sha256(phone_number.encode()).hexdigest()
+
+def create_user_profile(phone_number, country="unknown", language="unknown"):
+    phone_hash = hash_phone_number(phone_number)
+    conn = sqlite3.connect("askely.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE phone_hash = ?", (phone_hash,))
+    existing_user = cursor.fetchone()
+    if existing_user:
+        conn.close()
+        return existing_user[0]
+    user_id = f"askely_{uuid.uuid4().hex[:8]}"
+    cursor.execute("""
+        INSERT INTO users (id, phone_hash, country, language, points, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (user_id, phone_hash, country, language, 0, datetime.utcnow()))
+    conn.commit()
+    conn.close()
+    return user_id
+
+def search_hotels(city):
+    return f"🏨 Hôtels populaires à {city} :\n1. Atlas Hotel\n2. Riad Medina\n3. Comfort Inn {city}"
+
+def search_restaurants(city, cuisine=None):
+    if cuisine:
+        return f"🍽️ Restaurants {cuisine} à {city} :\n1. {cuisine} Palace\n2. Saveurs de {cuisine}\n3. Restaurant Medina"
+    return f"🍽️ Restaurants populaires à {city} :\n1. Le Gourmet\n2. Resto Bahia\n3. Café du Coin"
+
+def search_flights(origin, destination):
+    return f"✈️ Vols disponibles de {origin} vers {destination} :\n1. Air Maroc - 08h45\n2. Ryanair - 12h15\n3. Transavia - 18h30"
+
+@app.route("/webhook/whatsapp-webhook", methods=["POST"])
+def whatsapp_webhook():
+    incoming_msg = request.values.get("Body", "").strip()
+    phone_number = request.values.get("From", "").replace("whatsapp:", "")
+    country = request.values.get("WaId", "")[:2] if request.values.get("WaId") else "unknown"
+    language = "auto"
+    user_id = create_user_profile(phone_number, country, language)
+
+    msg_lower = incoming_msg.lower()
+
+    # Recherche Hôtel
+    match_hotel = re.search(r"h[oô]tel(?: à| a)? ([\w\s\-]+)", msg_lower)
+    if match_hotel:
+        city = match_hotel.group(1).strip().title()
+        result = search_hotels(city)
+        resp = MessagingResponse()
+        resp.message(f"[ID : {user_id}]\n{result}")
+        return str(resp)
+
+    # Recherche Restaurant
+    match_restaurant = re.search(r"restaurant(?: [\w]+)?(?: à| a)? ([\w\s\-]+)", msg_lower)
+    if match_restaurant:
+        city = match_restaurant.group(1).strip().title()
+        result = search_restaurants(city)
+        resp = MessagingResponse()
+        resp.message(f"[ID : {user_id}]\n{result}")
+        return str(resp)
+
+    # Recherche Vol
+    match_flight = re.search(r"vol(?: de)? ([\w\s]+) vers ([\w\s]+)", msg_lower)
+    if match_flight:
+        origin = match_flight.group(1).strip().title()
+        destination = match_flight.group(2).strip().title()
+        result = search_flights(origin, destination)
+        resp = MessagingResponse()
+        resp.message(f"[ID : {user_id}]\n{result}")
+        return str(resp)
+
+    # Sinon appel à GPT
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-4o",
             messages=[
-                {"role": "system", "content": (
-                    "Tu es Askely, un assistant intelligent expert en conciergerie internationale.\n"
-                    "Tu aides les utilisateurs à :\n"
-                    "- Organiser des circuits touristiques (jours, lieux, activités)\n"
-                    "- Élaborer un budget estimatif (hébergement, repas, transport, activités)\n"
-                    "- Donner la météo actuelle d'une ville\n"
-                    "- Suggérer des hôtels et restaurants\n"
-                    "- Et en cas de bagage perdu, les guider (sauf si réponse automatique déjà envoyée).\n"
-                    "Sois pratique, rapide et chaleureux."
-                )},
-                {"role": "user", "content": message}
-            ]
+                {"role": "system", "content": "Tu es Askely, un assistant de voyage intelligent, multilingue et serviable."},
+                {"role": "user", "content": incoming_msg}
+            ],
+            max_tokens=300
         )
-        return response.choices[0].message['content']
-    except Exception as e:
-        return f"❌ Erreur avec GPT : {str(e)}"
+        answer = response.choices[0].message["content"]
+    except Exception:
+        answer = "❌ Erreur avec l'intelligence artificielle. Veuillez réessayer."
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    resp = MessagingResponse()
+    resp.message(f"[ID : {user_id}]\n{answer}")
+    return str(resp)
+
+if __name__ == "__main__":
+    init_db()
+    app.run(debug=True, port=10000)
