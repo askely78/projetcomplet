@@ -11,6 +11,7 @@ import re
 app = Flask(__name__)
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
+# Initialisation de la base de données
 def init_db():
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
@@ -27,9 +28,11 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Hash sécurisé du numéro de téléphone
 def hash_phone_number(phone_number):
     return hashlib.sha256(phone_number.encode()).hexdigest()
 
+# Création de profil utilisateur sécurisé
 def create_user_profile(phone_number, country="unknown", language="unknown"):
     phone_hash = hash_phone_number(phone_number)
     conn = sqlite3.connect("askely.db")
@@ -48,6 +51,7 @@ def create_user_profile(phone_number, country="unknown", language="unknown"):
     conn.close()
     return user_id
 
+# Fonctions de service simulées
 def search_hotels(city):
     return f"🏨 Hôtels populaires à {city} :\n1. Atlas Hotel\n2. Riad Medina\n3. Comfort Inn {city}"
 
@@ -57,8 +61,9 @@ def search_restaurants(city, cuisine=None):
     return f"🍽️ Restaurants populaires à {city} :\n1. Le Gourmet\n2. Resto Bahia\n3. Café du Coin"
 
 def search_flights(origin, destination):
-    return f"✈️ Vols disponibles de {origin} vers {destination} :\n1. Air Maroc - 08h45\n2. Ryanair - 12h15\n3. Transavia - 18h30"
+    return f"✈️ Vols de {origin} vers {destination} :\n1. Air Maroc - 08h45\n2. Ryanair - 12h15\n3. Transavia - 18h30"
 
+# Webhook WhatsApp
 @app.route("/webhook/whatsapp-webhook", methods=["POST"])
 def whatsapp_webhook():
     incoming_msg = request.values.get("Body", "").strip()
@@ -69,7 +74,7 @@ def whatsapp_webhook():
 
     msg_lower = incoming_msg.lower()
 
-    # Recherche Hôtel
+    # Recherche hôtel
     match_hotel = re.search(r"h[oô]tel(?: à| a)? ([\w\s\-]+)", msg_lower)
     if match_hotel:
         city = match_hotel.group(1).strip().title()
@@ -78,7 +83,7 @@ def whatsapp_webhook():
         resp.message(f"[ID : {user_id}]\n{result}")
         return str(resp)
 
-    # Recherche Restaurant
+    # Recherche restaurant
     match_restaurant = re.search(r"restaurant(?: [\w]+)?(?: à| a)? ([\w\s\-]+)", msg_lower)
     if match_restaurant:
         city = match_restaurant.group(1).strip().title()
@@ -87,7 +92,7 @@ def whatsapp_webhook():
         resp.message(f"[ID : {user_id}]\n{result}")
         return str(resp)
 
-    # Recherche Vol
+    # Recherche vol
     match_flight = re.search(r"vol(?: de)? ([\w\s]+) vers ([\w\s]+)", msg_lower)
     if match_flight:
         origin = match_flight.group(1).strip().title()
@@ -97,7 +102,7 @@ def whatsapp_webhook():
         resp.message(f"[ID : {user_id}]\n{result}")
         return str(resp)
 
-    # Sinon appel à GPT
+    # Sinon appel GPT
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4o",
@@ -115,6 +120,8 @@ def whatsapp_webhook():
     resp.message(f"[ID : {user_id}]\n{answer}")
     return str(resp)
 
+# Lancement compatible Render
 if __name__ == "__main__":
     init_db()
-    app.run(debug=True, port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(debug=True, host="0.0.0.0", port=port)
