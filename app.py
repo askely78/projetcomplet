@@ -195,3 +195,11 @@ def whatsapp_webhook():
 
     points = add_points_to_user(phone_number, 1)
     resp = MessagingResponse()
+    resp.message(f"{answer}\n🎁 Vous gagnez 1 point Askely ! Total : {points} ⭐️")
+    return str(resp)
+
+# === 🚀 Lancement compatible Render (CORRECT)
+if __name__ == "__main__":
+    init_db()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(debug=True, host="0.0.0.0", port=port)
