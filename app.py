@@ -90,6 +90,21 @@ def get_public_reviews(n=5):
     conn.close()
     return rows
 
+def get_main_menu():
+    return (
+        "🤖 *Bienvenue sur Askely* – Votre concierge intelligent 🌍\n\n"
+        "Voici ce que vous pouvez faire 👇\n\n"
+        "🏨 *Hôtel à [ville]* – Rechercher des hôtels\n"
+        "🍽️ *Restaurant à [ville]* – Trouver des restaurants\n"
+        "✈️ *Vol de [ville A] vers [ville B]* – Voir les options de vols\n"
+        "🧳 *Réclamation bagage* – Aide pour bagage perdu ou endommagé\n"
+        "🗺️ *Plan à [ville]* – Circuit touristique jour par jour\n"
+        "💡 *Bons plans au [pays]* – Les meilleures offres locales\n"
+        "⭐ *Évaluer un vol/hôtel/restaurant/fidélité* – Laisser un avis avec une note\n"
+        "📋 *Voir tous les avis* – Afficher les avis des autres utilisateurs\n"
+        "👤 *Mon profil* – Voir vos points et date d'inscription\n\n"
+        "📌 Tapez *menu* à tout moment pour revoir ces options 😉"
+    )
 def corriger_message(msg):
     try:
         response = openai.ChatCompletion.create(
@@ -110,18 +125,4 @@ def search_hotels(city):
 
 def search_restaurants(city):
     restos = [f"{city} Gourmet", f"Bistro {city}", f"Chez {city}", f"La Table {city}", f"Café Medina"]
-    return "\n".join([f"🍽️ Restaurants à {city} :"] + [f"{i+1}. {r}" for i, r in enumerate(restos)])
-
-def search_flights(origin, destination):
-    return f"✈️ Vols de {origin} à {destination} :\n1. RAM 08h00\n2. Air Arabia 13h30\n3. Transavia 19h00"
-
-def generate_travel_plan(city):
-    return f"🗺️ Circuit touristique à {city} :\n- Jour 1 : visite guidée\n- Jour 2 : cuisine locale\n- Jour 3 : détente & shopping"
-
-def get_travel_deals(country):
-    return f"💡 Bons plans au {country} :\n- Réductions hébergement\n- Activités gratuites\n- Transports locaux pas chers"
-
-if __name__ == "__main__":
-    init_db()
-    port = int(os.environ.get("PORT", 10000))
-    app.run(debug=True, host="0.0.0.0", port=port)
+    return "\n".join([f"🍽️ Restaurants à {city} :"] +
