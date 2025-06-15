@@ -21,22 +21,31 @@ def init_db():
             country TEXT,
             language TEXT,
             points INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS avis (
+        CREATE TABLE IF NOT EXISTS evaluations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            phone_hash TEXT,
-            category TEXT,
-            review TEXT,
-            rating INTEGER,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            user_phone TEXT,
+            type TEXT,
+            nom TEXT,
+            note INTEGER,
+            avis TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS interactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_phone TEXT,
+            type TEXT,
+            valeur TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()
     conn.close()
-
 def hash_phone_number(phone_number):
     return hashlib.sha256(phone_number.encode()).hexdigest()
 
@@ -51,149 +60,173 @@ def create_user_profile(phone_number, country="unknown", language="unknown"):
         return existing_user[0]
     user_id = f"askely_{uuid.uuid4().hex[:8]}"
     cursor.execute("INSERT INTO users (id, phone_hash, country, language, points, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                   (user_id, phone_hash, country, language, 0, datetime.now(timezone.utc).isoformat()))
+                   (user_id, phone_hash, country, language, 0, datetime.now(timezone.utc)))
     conn.commit()
     conn.close()
     return user_id
 
-def is_new_user(phone_number):
+def add_points_to_user(phone_number, points=10):
     phone_hash = hash_phone_number(phone_number)
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT created_at FROM users WHERE phone_hash = ?", (phone_hash,))
-    row = cursor.fetchone()
-    conn.close()
-    if not row:
-        return False
-    try:
-        created_time = datetime.fromisoformat(row[0])
-        return (datetime.now(timezone.utc) - created_time).total_seconds() < 15
-    except Exception:
-        return False
-
-def corriger_message(msg):
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Corrige les fautes sans changer le sens."},
-                {"role": "user", "content": msg}
-            ],
-            max_tokens=100
-        )
-        return response.choices[0].message["content"]
-    except Exception:
-        return msg
-
-def add_points_for_review(category):
-    return {
-        "vol": 50,
-        "hotel": 40,
-        "restaurant": 30,
-        "fidelite": 20
-    }.get(category.lower(), 0)
-
-def add_review(phone_number, category, rating, review_text):
-    phone_hash = hash_phone_number(phone_number)
-    conn = sqlite3.connect("askely.db")
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO avis (phone_hash, category, rating, review) VALUES (?, ?, ?, ?)",
-                   (phone_hash, category, rating, review_text))
-    cursor.execute("UPDATE users SET points = points + ? WHERE phone_hash = ?",
-                   (add_points_for_review(category), phone_hash))
+    cursor.execute("UPDATE users SET points = points + ? WHERE phone_hash = ?", (points, phone_hash))
     cursor.execute("SELECT points FROM users WHERE phone_hash = ?", (phone_hash,))
     new_points = cursor.fetchone()[0]
     conn.commit()
     conn.close()
     return new_points
-
-def get_last_reviews():
+def log_interaction(phone, type_inter, valeur):
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT category, rating, review, created_at FROM avis ORDER BY created_at DESC LIMIT 3")
-    rows = cursor.fetchall()
+    cursor.execute("INSERT INTO interactions (user_phone, type, valeur) VALUES (?, ?, ?)", (phone, type_inter, valeur))
+    conn.commit()
     conn.close()
-    return "\n\n".join([f"⭐ {r[1]}/5 | {r[0].capitalize()} : {r[2]}" for r in rows])
+
+def has_interaction(phone, type_inter, nom):
+    conn = sqlite3.connect("askely.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM interactions WHERE user_phone = ? AND type = ? AND valeur LIKE ?",
+                   (phone, type_inter, f"%{nom}%"))
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count > 0
 
 @app.route("/webhook/whatsapp-webhook", methods=["POST"])
 def whatsapp_webhook():
     incoming_msg = request.values.get("Body", "").strip()
     phone_number = request.values.get("From", "").replace("whatsapp:", "")
-    country = request.values.get("WaId", "")[:2] if request.values.get("WaId") else "unknown"
-    language = "auto"
-
-    create_user_profile(phone_number, country, language)
-
-    if is_new_user(phone_number):
-        welcome = (
-            "🎉 *Bienvenue sur Askely, votre assistant de voyage intelligent !* 🤖\n"
-            "Voici ce que je peux faire pour vous :\n\n"
-            "📍 *Recherches rapides* : hôtels, restaurants, vols, bagages, bons plans\n"
-            "📝 *Gagnez des points* en tapant :\n"
-            " - avis vol 5/5 très bon vol\n"
-            " - avis hôtel 4/5 calme et propre\n"
-            " - avis restaurant 3/5 bon mais lent\n"
-            " - avis fidélité 5/5 programme utile\n\n"
-            "👤 Tapez *mon profil* ou *mes points* pour consulter vos points\n"
-            "📢 Tapez *tous les avis* pour voir les retours des autres utilisateurs"
-        )
+    create_user_profile(phone_number)
+    msg_lower = incoming_msg.lower()
+    # --- RECHERCHE VOL ---
+    match_flight = re.search(r"vol(?: de)? ([\\w\\s]+) vers ([\\w\\s]+)", msg_lower)
+    if match_flight:
+        origin = match_flight.group(1).strip().title()
+        destination = match_flight.group(2).strip().title()
+        log_interaction(phone_number, "vol", f"{origin} → {destination}")
+        result = f"✈️ Vols de {origin} à {destination} :\n1. RAM - 08h00\n2. Air Arabia - 13h30\n3. EasyJet - 18h45"
         resp = MessagingResponse()
-        resp.message(welcome)
+        resp.message(result)
         return str(resp)
 
-    msg_lower = corriger_message(incoming_msg.lower())
+    # --- RECHERCHE HÔTEL ---
+    match_hotel = re.search(r"h[oô]tel(?: à| a)? ([\\w\\s\\-]+)", msg_lower)
+    if match_hotel:
+        city = match_hotel.group(1).strip().title()
+        log_interaction(phone_number, "hotel", city)
+        result = f"🏨 Hôtels recommandés à {city} :\n1. Atlas Palace\n2. Riad Medina\n3. Hôtel des Arts"
+        resp = MessagingResponse()
+        resp.message(result)
+        return str(resp)
 
-    if "mon profil" in msg_lower or "mes points" in msg_lower:
-        phone_hash = hash_phone_number(phone_number)
+    # --- RECHERCHE RESTAURANT ---
+    match_restaurant = re.search(r"restaurant(?: [\\w]+)?(?: à| a)? ([\\w\\s\\-]+)", msg_lower)
+    if match_restaurant:
+        city = match_restaurant.group(1).strip().title()
+        log_interaction(phone_number, "restaurant", city)
+        result = f"🍽️ Restaurants à {city} :\n1. Le Gourmet\n2. Saveurs Atlas\n3. Beldi Resto"
+        resp = MessagingResponse()
+        resp.message(result)
+        return str(resp)
+
+    # --- CIRCUITS TOURISTIQUES ---
+    match_circuit = re.search(r"(?:circuit|visite|tour) (?:à|de|dans)? ([\\w\\s\\-]+)", msg_lower)
+    if match_circuit:
+        city = match_circuit.group(1).strip().title()
+        log_interaction(phone_number, "circuit", city)
+        result = f"🗺️ Circuit touristique à {city} :\n- Jour 1 : Centre historique\n- Jour 2 : Artisanat\n- Jour 3 : Gastronomie"
+        resp = MessagingResponse()
+        resp.message(result)
+        return str(resp)
+
+    # --- BONS PLANS ---
+    match_deal = re.search(r"bons? plans? (?:au|en|dans le)? ([\\w\\s\\-]+)", msg_lower)
+    if match_deal:
+        country = match_deal.group(1).strip().title()
+        log_interaction(phone_number, "bons plans", country)
+        result = f"💡 Bons plans au {country} :\n- Réduction hôtels\n- Transports pas chers\n- Activités locales"
+        resp = MessagingResponse()
+        resp.message(result)
+        return str(resp)
+
+    # --- RÉCLAMATION BAGAGE ---
+    if "bagage" in msg_lower and ("perdu" in msg_lower or "endommagé" in msg_lower or "réclamation" in msg_lower):
+        log_interaction(phone_number, "bagage", "réclamation")
+        result = "📄 Réclamation enregistrée : bagage perdu ou endommagé. Merci de fournir les détails complémentaires."
+        resp = MessagingResponse()
+        resp.message(result)
+        return str(resp)
+    # Évaluation vol: AT203, Casablanca → Paris, Royal Air Maroc, ⭐⭐⭐⭐, avis: Très ponctuel.
+    match_vol = re.search(r"évaluation vol[:\\-]?\\s*(\\w+),\\s*(.*?→.*?),\\s*(.*?),\\s*⭐{1,5},\\s*avis[:\\-]?\\s*(.+)", msg_lower)
+    if match_vol:
+        numero_vol = match_vol.group(1).strip().upper()
+        trajet = match_vol.group(2).strip().title()
+        compagnie = match_vol.group(3).strip().title()
+        avis = match_vol.group(4).strip()
+        note = msg_lower.count("⭐")
+        if not has_interaction(phone_number, "vol", trajet):
+            resp = MessagingResponse()
+            resp.message("❌ Pour évaluer ce vol, vous devez d’abord l’avoir recherché avec Askely.")
+            return str(resp)
         conn = sqlite3.connect("askely.db")
         cursor = conn.cursor()
-        cursor.execute("SELECT id, points, created_at FROM users WHERE phone_hash = ?", (phone_hash,))
-        data = cursor.fetchone()
+        cursor.execute("INSERT INTO evaluations (user_phone, type, nom, note, avis) VALUES (?, ?, ?, ?, ?)",
+                       (phone_number, "vol", f"{numero_vol} - {compagnie}", note, avis))
+        conn.commit()
         conn.close()
-        if data:
-            user_id, points, created_at = data
-            msg = f"👤 *Votre Profil Askely*\n⭐ Points : {points}\n🗓️ Depuis : {created_at[:10]}"
-        else:
-            msg = "Aucun profil trouvé."
+        points = add_points_to_user(phone_number, 10)
         resp = MessagingResponse()
-        resp.message(msg)
-        return str(resp)
-
-    if "tous les avis" in msg_lower:
-        avis = get_last_reviews()
-        resp = MessagingResponse()
-        resp.message(f"🗣️ *Derniers avis utilisateurs :*\n\n{avis}")
-        return str(resp)
-
-    match_avis = re.search(r"avis (vol|h[oô]tel|restaurant|fid[eé]lit[eé]) ?(\d)/5 (.+)", msg_lower)
-    if match_avis:
-        cat = match_avis.group(1)
-        if "hôtel" in cat or "hô" in cat: cat = "hotel"
-        if "fid" in cat: cat = "fidelite"
-        rating = int(match_avis.group(2))
-        text = match_avis.group(3)
-        points = add_review(phone_number, cat, rating, text)
-        resp = MessagingResponse()
-        resp.message(f"✅ Avis enregistré pour {cat} ({rating}/5)\n🎁 +{add_points_for_review(cat)} points Askely ! Total : {points}\n📌 Tapez *mon profil* ou *tous les avis*.")
-        return str(resp)
-
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Tu es Askely, un assistant de voyage intelligent."},
-                {"role": "user", "content": incoming_msg}
-            ],
-            max_tokens=300
+        resp.message(
+            f"✅ Merci pour votre avis sur le vol {numero_vol} avec {compagnie} ! ⭐{note}/5\\n"
+            f"🎁 +10 points Askely. Total : {points} ⭐"
         )
-        answer = response.choices[0].message["content"]
-    except Exception:
-        answer = "⚠️ Erreur GPT. Réessayez plus tard."
+        return str(resp)
 
+    # Évaluations hôtel, restaurant, fidélité
+    eval_patterns = {
+        "hotel": r"évaluation hôtel[:\\-]?\\s*(.*?),\\s*⭐{1,5},\\s*avis[:\\-]?\\s*(.+)",
+        "restaurant": r"évaluation restaurant[:\\-]?\\s*(.*?),\\s*⭐{1,5},\\s*avis[:\\-]?\\s*(.+)",
+        "fidelite": r"évaluation fidélité[:\\-]?\\s*(.*?),\\s*⭐{1,5},\\s*avis[:\\-]?\\s*(.+)"
+    }
+
+    for type_eval, pattern in eval_patterns.items():
+        match = re.search(pattern, msg_lower)
+        if match:
+            nom = match.group(1).strip().title()
+            avis = match.group(2).strip()
+            note = msg_lower.count("⭐")
+            if not has_interaction(phone_number, type_eval, nom):
+                resp = MessagingResponse()
+                resp.message(f"❌ Pour évaluer {nom}, vous devez d'abord l’avoir consulté via Askely.")
+                return str(resp)
+            conn = sqlite3.connect("askely.db")
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO evaluations (user_phone, type, nom, note, avis) VALUES (?, ?, ?, ?, ?)",
+                           (phone_number, type_eval, nom, note, avis))
+            conn.commit()
+            conn.close()
+            points = add_points_to_user(phone_number, 10)
+            resp = MessagingResponse()
+            resp.message(
+                f"✅ Merci pour votre avis sur {nom} ({type_eval}) ! ⭐{note}/5\\n"
+                f"🎁 +10 points Askely. Total : {points} ⭐"
+            )
+            return str(resp)
+
+    # Message d’accueil
+    accueil = (
+        "👋 Bienvenue sur *Askely*, votre assistant de voyage 🌍\\n\\n"
+        "📌 Vous pouvez :\\n"
+        "- chercher un hôtel\\n- trouver un restaurant\\n- comparer des vols\\n- évaluer vos expériences\\n\\n"
+        "*Exemples d'évaluation* :\\n"
+        "Évaluation vol: AT203, Casablanca → Paris, Royal Air Maroc, ⭐⭐⭐⭐, avis: Très ponctuel.\\n"
+        "Évaluation hôtel: Hôtel Atlas, ⭐⭐⭐⭐, avis: Accueil chaleureux.\\n"
+        "Évaluation restaurant: Dar Yacout, ⭐⭐⭐⭐, avis: Excellent tajine.\\n"
+        "Évaluation fidélité: Flying Blue, ⭐⭐⭐⭐, avis: Facile à utiliser.\\n"
+        "✅ Vous gagnez +10 points à chaque avis validé."
+    )
     resp = MessagingResponse()
-    resp.message(f"{answer}\n📌 Tapez *mon profil* pour consulter vos points.")
+    resp.message(accueil)
     return str(resp)
-
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 10000))
