@@ -1,4 +1,3 @@
-
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 import openai
@@ -121,7 +120,6 @@ def generate_travel_plan(city):
 
 def get_travel_deals(country):
     return f"💡 Bons plans au {country} :\n- Réductions hébergement\n- Activités gratuites\n- Transports locaux pas chers"
-
 
 if __name__ == "__main__":
     init_db()
