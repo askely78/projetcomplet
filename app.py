@@ -6,11 +6,11 @@ import hashlib
 import uuid
 import sqlite3
 from datetime import datetime, timezone
-import re
 
 app = Flask(__name__)
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
+# --- DATABASE ---
 def init_db():
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
@@ -18,11 +18,14 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
             phone_hash TEXT UNIQUE,
+            state TEXT,
+            temp_type TEXT,
+            temp_rating TEXT,
             country TEXT,
             language TEXT,
             points INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            greeted INTEGER DEFAULT 0
+            greeted INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
     cursor.execute("""
@@ -38,183 +41,166 @@ def init_db():
     conn.commit()
     conn.close()
 
-def hash_phone_number(phone_number):
-    return hashlib.sha256(phone_number.encode()).hexdigest()
+def hash_phone_number(phone):
+    return hashlib.sha256(phone.encode()).hexdigest()
 
-def create_user_profile(phone_number, country="unknown", language="unknown"):
-    phone_hash = hash_phone_number(phone_number)
+# --- USER ---
+def create_user(phone, country="unknown", language="unknown"):
+    phone_hash = hash_phone_number(phone)
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM users WHERE phone_hash = ?", (phone_hash,))
     user = cursor.fetchone()
-    if user:
-        conn.close()
-        return user[0], user[6]  # user_id, greeted
-    user_id = f"askely_{uuid.uuid4().hex[:8]}"
-    cursor.execute("INSERT INTO users (id, phone_hash, country, language, points, created_at, greeted) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                   (user_id, phone_hash, country, language, 0, datetime.now(timezone.utc).isoformat(), 0))
+    if not user:
+        user_id = f"askely_{uuid.uuid4().hex[:8]}"
+        cursor.execute("""
+            INSERT INTO users (id, phone_hash, country, language, points, created_at, greeted, state)
+            VALUES (?, ?, ?, ?, ?, ?, 0, '')
+        """, (user_id, phone_hash, country, language, 0, datetime.now(timezone.utc).isoformat()))
     conn.commit()
     conn.close()
-    return user_id, 0
 
-def add_points(phone_hash, amount):
+def get_user(phone_hash):
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET points = points + ? WHERE phone_hash = ?", (amount, phone_hash))
-    cursor.execute("SELECT points FROM users WHERE phone_hash = ?", (phone_hash,))
-    points = cursor.fetchone()[0]
+    cursor.execute("SELECT * FROM users WHERE phone_hash = ?", (phone_hash,))
+    user = cursor.fetchone()
+    conn.close()
+    return user
+
+def update_user_state(phone_hash, state=None, temp_type=None, temp_rating=None):
+    conn = sqlite3.connect("askely.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE users SET state = ?, temp_type = ?, temp_rating = ? WHERE phone_hash = ?
+    """, (state or '', temp_type or '', temp_rating or '', phone_hash))
     conn.commit()
     conn.close()
-    return points
 
+def add_points(phone_hash, points):
+    conn = sqlite3.connect("askely.db")
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET points = points + ? WHERE phone_hash = ?", (points, phone_hash))
+    cursor.execute("SELECT points FROM users WHERE phone_hash = ?", (phone_hash,))
+    new_points = cursor.fetchone()[0]
+    conn.commit()
+    conn.close()
+    return new_points
+
+# --- REVIEW ---
 def save_review(phone_hash, review_type, rating, comment):
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO reviews (phone_hash, type, rating, comment) VALUES (?, ?, ?, ?)",
-                   (phone_hash, review_type, rating, comment))
+    cursor.execute("""
+        INSERT INTO reviews (phone_hash, type, rating, comment)
+        VALUES (?, ?, ?, ?)
+    """, (phone_hash, review_type, rating, comment))
     conn.commit()
     conn.close()
 
-def get_last_reviews(phone_hash, n=3):
-    conn = sqlite3.connect("askely.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT type, rating, comment FROM reviews WHERE phone_hash = ? ORDER BY created_at DESC LIMIT ?", (phone_hash, n))
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
-
-def get_public_reviews(n=5):
-    conn = sqlite3.connect("askely.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT type, rating, comment FROM reviews ORDER BY created_at DESC LIMIT ?", (n,))
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
-
+# --- UTIL ---
 def get_main_menu():
     return (
-        "🤖 *Bienvenue sur Askely* – Votre concierge intelligent 🌍\n\n"
-        "Voici ce que vous pouvez faire 👇\n\n"
-        "⭐ *Évaluer un vol, hôtel, restaurant ou programme de fidélité* – Laisser un avis noté\n"
-        "📋 *Voir tous les avis* – Lire les avis des autres utilisateurs\n"
-        "👤 *Mon profil* – Voir vos points\n\n"
-        "✍️ Pour évaluer, tapez :\n"
-        "*évaluation hôtel: Nom, note: 4, avis: votre commentaire*\n"
-        "*évaluation vol: Nom compagnie, note: 5, avis: commentaire*\n"
-        "*évaluation restaurant: Nom, note: 3, avis: votre avis*\n"
-        "*évaluation fidélité: Nom programme, note: 4, avis: ressenti*"
+        "🤖 Bienvenue sur Askely – Votre assistant voyage intelligent 🌍\n\n"
+        "🎯 *Menu principal* :\n"
+        "1. Évaluer un vol\n"
+        "2. Évaluer un hôtel\n"
+        "3. Évaluer un restaurant\n"
+        "4. Évaluer un programme de fidélité\n"
+        "5. Voir mes points\n"
+        "6. Voir le menu\n\n"
+        "Envoyez le *numéro* ou le *mot-clé* pour commencer."
     )
 
-def corriger_message(msg):
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Corrige les fautes sans changer le sens."},
-                {"role": "user", "content": msg}
-            ],
-            max_tokens=100
-        )
-        return response.choices[0].message["content"]
-    except Exception:
-        return msg
+def get_review_points(review_type):
+    return {
+        "vol": 10,
+        "hôtel": 7,
+        "restaurant": 5,
+        "fidélité": 8
+    }.get(review_type, 0)
 
-def parse_evaluation_message(message):
-    patterns = {
-        "vol": r"évaluation\s+vol[:\-]?\s*(.*?),\s*note[:\-]?\s*(\d),\s*avis[:\-]?\s*(.+)",
-        "hôtel": r"évaluation\s+h[oô]tel[:\-]?\s*(.*?),\s*note[:\-]?\s*(\d),\s*avis[:\-]?\s*(.+)",
-        "restaurant": r"évaluation\s+restaurant[:\-]?\s*(.*?),\s*note[:\-]?\s*(\d),\s*avis[:\-]?\s*(.+)",
-        "fidélité": r"évaluation\s+fidélité[:\-]?\s*(.*?),\s*note[:\-]?\s*(\d),\s*avis[:\-]?\s*(.+)",
-    }
-    for type_, pattern in patterns.items():
-        match = re.match(pattern, message, re.IGNORECASE)
-        if match:
-            return type_, int(match.group(2)), match.group(3)
-    return None, None, None
-
+# --- WEBHOOK ---
 @app.route("/webhook/whatsapp-webhook", methods=["POST"])
-def whatsapp_webhook():
-    incoming_msg = request.values.get("Body", "").strip()
-    from_number = request.values.get("From", "")
-    country = request.values.get("WaId", "")[:2]
-    phone_hash = hash_phone_number(from_number)
+def webhook():
+    incoming = request.values.get("Body", "").strip()
+    phone = request.values.get("From", "")
+    phone_hash = hash_phone_number(phone)
+    create_user(phone)
 
-    user_id, greeted = create_user_profile(from_number, country)
+    user = get_user(phone_hash)
+    state, temp_type, temp_rating = user[2], user[3], user[4]
+
     response = MessagingResponse()
     msg = response.message()
 
-    # Message d’accueil automatique à la première interaction
-    if greeted == 0:
-        welcome_message = (
-            "🎉 *Bienvenue sur Askely !* 🎉\n\n"
-            "Vous voulez noter votre vol, votre séjour dans un hôtel ou votre expérience dans un restaurant ?\n"
-            "Vous serez récompensé par :\n"
-            "✈️ 10 points pour les vols\n"
-            "🏨 7 points pour les hôtels\n"
-            "🍽️ 5 points pour les restaurants\n"
-            "🎁 8 points pour les programmes de fidélité\n\n"
-            "Envoyez un message comme :\n"
-            "*évaluation hôtel: Riad Fès, note: 5, avis: service parfait !*\n\n"
-            "Tapez *menu* pour voir tout ce que je peux faire."
-        )
-        msg.body(welcome_message)
-        conn = sqlite3.connect("askely.db")
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET greeted = 1 WHERE phone_hash = ?", (phone_hash,))
-        conn.commit()
-        conn.close()
-        return str(response)
-
-    incoming_msg = corriger_message(incoming_msg)
-
-    if incoming_msg.lower() in ["menu", "aide"]:
+    if incoming.lower() in ["menu", "6"]:
+        update_user_state(phone_hash)
         msg.body(get_main_menu())
         return str(response)
 
-    if "mon profil" in incoming_msg.lower() or "mes points" in incoming_msg.lower():
-        conn = sqlite3.connect("askely.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT points, created_at FROM users WHERE phone_hash = ?", (phone_hash,))
-        row = cursor.fetchone()
-        conn.close()
-        if row:
-            points, created = row
-            msg.body(f"👤 *Votre profil Askely*\n📅 Inscrit depuis : {created[:10]}\n🏆 Points : {points}")
+    if incoming.lower() in ["5", "mes points"]:
+        points = user[7]
+        msg.body(f"🏆 Vous avez {points} points.")
         return str(response)
 
-    if "voir tous les avis" in incoming_msg.lower():
-        avis = get_public_reviews()
-        textes = [f"{r[0]} ⭐{r[1]} – {r[2]}" for r in avis]
-        msg.body("📋 *Avis récents :*\n" + "\n".join(textes))
+    if state == "waiting_type":
+        if incoming.lower() in ["vol", "hôtel", "restaurant", "fidélité"]:
+            update_user_state(phone_hash, "waiting_rating", incoming.lower())
+            msg.body("Merci ! Quelle note (de 1 à 5) souhaitez-vous donner ?")
+        else:
+            msg.body("Veuillez choisir un type parmi : vol, hôtel, restaurant, fidélité.")
         return str(response)
 
-    # Traitement des évaluations
-    review_type, rating, comment = parse_evaluation_message(incoming_msg)
-    if review_type:
-        points_map = {"vol": 10, "hôtel": 7, "restaurant": 5, "fidélité": 8}
-        save_review(phone_hash, review_type, rating, comment)
-        total_points = add_points(phone_hash, points_map[review_type])
-        msg.body(f"✅ Merci pour votre avis sur le {review_type} !\n⭐ Note : {rating}\n📝 Commentaire : {comment}\n\n🎁 Vous avez gagné {points_map[review_type]} points.\n🏆 Total : {total_points} points.")
-        derniers = get_last_reviews(phone_hash)
-        if derniers:
-            msg.body("📋 Vos derniers avis :\n" + "\n".join([f"{r[0]} ⭐{r[1]} – {r[2]}" for r in derniers]))
-            msg.body("🔗 Voir tous les avis")
+    if state == "waiting_rating":
+        if incoming.isdigit() and 1 <= int(incoming) <= 5:
+            update_user_state(phone_hash, "waiting_comment", temp_type, incoming)
+            msg.body("Merci ! Que souhaitez-vous écrire comme commentaire ?")
+        else:
+            msg.body("La note doit être un nombre entre 1 et 5.")
         return str(response)
 
-    # Sinon, GPT libre
+    if state == "waiting_comment":
+        points = get_review_points(temp_type)
+        save_review(phone_hash, temp_type, int(temp_rating), incoming)
+        total_points = add_points(phone_hash, points)
+        update_user_state(phone_hash)
+        msg.body(f"✅ Merci pour votre avis sur le {temp_type} !\n🎉 Vous avez gagné {points} points.\n🏆 Total : {total_points} points.")
+        return str(response)
+
+    if incoming.lower() in ["1", "vol"]:
+        update_user_state(phone_hash, "waiting_rating", "vol")
+        msg.body("Très bien ! Quelle note (1 à 5) souhaitez-vous donner pour ce vol ?")
+        return str(response)
+
+    if incoming.lower() in ["2", "hôtel"]:
+        update_user_state(phone_hash, "waiting_rating", "hôtel")
+        msg.body("Très bien ! Quelle note (1 à 5) souhaitez-vous donner pour cet hôtel ?")
+        return str(response)
+
+    if incoming.lower() in ["3", "restaurant"]:
+        update_user_state(phone_hash, "waiting_rating", "restaurant")
+        msg.body("Très bien ! Quelle note (1 à 5) souhaitez-vous donner pour ce restaurant ?")
+        return str(response)
+
+    if incoming.lower() in ["4", "fidélité"]:
+        update_user_state(phone_hash, "waiting_rating", "fidélité")
+        msg.body("Très bien ! Quelle note (1 à 5) souhaitez-vous donner pour ce programme de fidélité ?")
+        return str(response)
+
+    # GPT libre
     try:
-        completion = openai.ChatCompletion.create(
+        reply = openai.ChatCompletion.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Tu es Askely, un assistant de voyage multilingue, professionnel, clair et aimable."},
-                {"role": "user", "content": incoming_msg}
+                {"role": "system", "content": "Tu es Askely, un assistant de voyage."},
+                {"role": "user", "content": incoming}
             ],
             max_tokens=200
         )
-        reply = completion.choices[0].message["content"]
-        msg.body(reply)
+        msg.body(reply.choices[0].message["content"])
     except:
-        msg.body("❌ Erreur de traitement de votre demande. Réessayez plus tard.")
+        msg.body("❌ Je n’ai pas pu répondre pour le moment. Réessayez plus tard.")
 
     return str(response)
 
