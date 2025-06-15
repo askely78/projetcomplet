@@ -11,7 +11,6 @@ import re
 app = Flask(__name__)
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# ------------------ BASE DE DONNÉES ------------------
 def init_db():
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
@@ -39,7 +38,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ------------------ FONCTIONS UTILITAIRES ------------------
 def hash_phone_number(phone_number):
     return hashlib.sha256(phone_number.encode()).hexdigest()
 
@@ -58,6 +56,13 @@ def create_user_profile(phone_number, country="unknown", language="unknown"):
     conn.commit()
     conn.close()
     return user_id, 0
+
+def mark_greeted(phone_hash):
+    conn = sqlite3.connect("askely.db")
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET greeted = 1 WHERE phone_hash = ?", (phone_hash,))
+    conn.commit()
+    conn.close()
 
 def add_points(phone_hash, amount):
     conn = sqlite3.connect("askely.db")
@@ -81,13 +86,46 @@ def get_last_reviews(phone_hash, n=3):
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
     cursor.execute("SELECT type, rating, comment FROM reviews WHERE phone_hash = ? ORDER BY created_at DESC LIMIT ?", (phone_hash, n))
-    return cursor.fetchall()
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
 
 def get_public_reviews(n=5):
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
     cursor.execute("SELECT type, rating, comment FROM reviews ORDER BY created_at DESC LIMIT ?", (n,))
-    return cursor.fetchall()
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+def get_main_menu():
+    return (
+        "🤖 *Bienvenue sur Askely* – Votre concierge intelligent 🌍\n\n"
+        "Voici ce que vous pouvez faire 👇\n\n"
+        "🏨 *Hôtel à [ville]* – Rechercher des hôtels\n"
+        "🍽️ *Restaurant à [ville]* – Trouver des restaurants\n"
+        "✈️ *Vol de [ville A] vers [ville B]* – Voir les options de vols\n"
+        "🧳 *Réclamation bagage* – Aide pour bagage perdu ou endommagé\n"
+        "🗺️ *Plan à [ville]* – Circuit touristique jour par jour\n"
+        "💡 *Bons plans au [pays]* – Les meilleures offres locales\n"
+        "⭐ *Évaluer un vol/hôtel/restaurant/fidélité* – Laisser un avis avec une note\n"
+        "📋 *Voir tous les avis* – Afficher les avis des autres utilisateurs\n"
+        "👤 *Mon profil* – Voir vos points et date d'inscription\n\n"
+        "📌 Tapez *menu* à tout moment pour revoir ces options 😉"
+    )
+
+def get_welcome_message():
+    return (
+        "🎉 *Bienvenue sur Askely !* 🎉\n\n"
+        "Vous voulez noter votre vol, votre séjour dans un hôtel ou votre expérience dans un restaurant ?\n"
+        "Vous serez récompensé par :\n"
+        "✈️ 10 points pour les vols\n"
+        "🏨 7 points pour les hôtels\n"
+        "🍽️ 5 points pour les restaurants\n"
+        "🎁 8 points pour les programmes de fidélité\n\n"
+        "Ou vous avez une demande qui concerne votre voyage ?\n"
+        "Cela n’est pas récompensé.\n\n"
+        "Tapez *menu* pour commencer ✨"
+    )
 
 def corriger_message(msg):
     try:
@@ -100,7 +138,7 @@ def corriger_message(msg):
             max_tokens=100
         )
         return response.choices[0].message["content"]
-    except:
+    except Exception:
         return msg
 
 def parse_evaluation_message(msg):
@@ -108,41 +146,24 @@ def parse_evaluation_message(msg):
         "vol": r"évaluation\s+vol[:\-]?\s*(.*?),\s*note[:\-]?\s*(\d),\s*avis[:\-]?\s*(.+)",
         "hôtel": r"évaluation\s+h[oô]tel[:\-]?\s*(.*?),\s*note[:\-]?\s*(\d),\s*avis[:\-]?\s*(.+)",
         "restaurant": r"évaluation\s+restaurant[:\-]?\s*(.*?),\s*note[:\-]?\s*(\d),\s*avis[:\-]?\s*(.+)",
-        "fidélité": r"évaluation\s+fidélité[:\-]?\s*(.*?),\s*note[:\-]?\s*(\d),\s*avis[:\-]?\s*(.+)"
+        "fidélité": r"évaluation\s+fidélité[:\-]?\s*(.*?),\s*note[:\-]?\s*(\d),\s*avis[:\-]?\s*(.+)",
     }
     for review_type, pattern in patterns.items():
-        match = re.match(pattern, msg, re.IGNORECASE)
+        match = re.search(pattern, msg, re.IGNORECASE)
         if match:
-            return review_type, int(match.group(2)), match.group(3)
+            return review_type, int(match.group(2)), match.group(3).strip()
     return None, None, None
 
-def get_main_menu():
-    return (
-        "🤖 *Bienvenue sur Askely* – Votre concierge intelligent 🌍\n\n"
-        "Voici ce que vous pouvez faire 👇\n"
-        "🏨 *Hôtel à [ville]*\n"
-        "🍽️ *Restaurant à [ville]*\n"
-        "✈️ *Vol de [ville A] vers [ville B]*\n"
-        "🧳 *Réclamation bagage*\n"
-        "🗺️ *Plan à [ville]*\n"
-        "💡 *Bons plans au [pays]*\n"
-        "⭐ *Évaluer un vol/hôtel/restaurant/fidélité*\n"
-        "📋 *Voir tous les avis*\n"
-        "👤 *Mon profil / Mes points*\n"
-        "📌 Tapez *menu* à tout moment pour revoir ces options 😉"
-    )
-
-def get_welcome_message():
-    return (
-        "🎉 Bienvenue sur Askely !\n"
-        "Vous voulez noter votre vol, votre séjour dans un hôtel ou votre expérience dans un restaurant ?\n"
-        "Vous serez récompensé par :\n"
-        "✈️ 10 points pour les vols\n"
-        "🏨 7 points pour les hôtels\n"
-        "🍽️ 5 points pour les restaurants\n\n"
-        "Ou vous avez une demande qui concerne votre voyage ? Cela n’est pas récompensé.\n\n"
-        "Commencez l’expérience dès maintenant et gagnez des points à chaque avis !"
-    )
+def guided_review_step(user_id, step, msg):
+    steps = [
+        "Quel type d’évaluation souhaitez-vous faire ? (vol, hôtel, restaurant, fidélité)",
+        "Quel est le nom ou la référence ?",
+        "Quelle est votre note sur 5 ?",
+        "Votre avis en quelques mots ?"
+    ]
+    if step < len(steps):
+        return steps[step]
+    return None
 
 def search_hotels(city):
     hotels = [f"{city} Palace", f"Riad {city}", f"Dar Atlas {city}", f"Luxury Stay {city}", f"Hotel Central {city}"]
@@ -152,16 +173,31 @@ def search_restaurants(city):
     restos = [f"{city} Gourmet", f"Bistro {city}", f"Chez {city}", f"La Table {city}", f"Café Medina"]
     return "\n".join([f"🍽️ Restaurants à {city} :"] + [f"{i+1}. {r}" for i, r in enumerate(restos)])
 
-def search_flights(origin, destination):
-    return f"✈️ Vols de {origin} à {destination} :\n1. RAM 08h00\n2. Air Arabia 13h30\n3. Transavia 19h00"
+def search_flights(origin, dest):
+    vols = [
+        f"Air {origin}-{dest} à 8h30",
+        f"{origin} Express vers {dest} à 13h45",
+        f"Royal {origin}-{dest} à 21h00"
+    ]
+    return "\n".join([f"✈️ Vols de {origin} vers {dest} :"] + [f"{i+1}. {v}" for i, v in enumerate(vols)])
 
 def generate_travel_plan(city):
-    return f"🗺️ Circuit touristique à {city} :\n- Jour 1 : visite guidée\n- Jour 2 : cuisine locale\n- Jour 3 : détente & shopping"
+    return (
+        f"🗺️ Circuit touristique à {city} :\n"
+        "1. Matin : Visite historique\n"
+        "2. Midi : Déjeuner local\n"
+        "3. Après-midi : Souks / musées\n"
+        "4. Soir : Dîner et animations"
+    )
 
 def get_travel_deals(country):
-    return f"💡 Bons plans au {country} :\n- Réductions hébergement\n- Activités gratuites\n- Transports locaux pas chers"
-
-# ------------------ ROUTE PRINCIPALE ------------------
+    return (
+        f"💡 Bons plans au {country} :\n"
+        "- Réductions duty free\n"
+        "- Excursions locales à moitié prix\n"
+        "- Restaurants partenaires avec cadeaux\n"
+        "- Entrées gratuites dans certains musées"
+    )
 @app.route("/webhook/whatsapp-webhook", methods=["POST"])
 def whatsapp_webhook():
     incoming_msg = request.values.get("Body", "").strip()
@@ -169,90 +205,114 @@ def whatsapp_webhook():
     country = request.values.get("WaId", "")[:2]
     phone_hash = hash_phone_number(from_number)
     user_id, greeted = create_user_profile(from_number, country)
+
     response = MessagingResponse()
     msg = response.message()
 
+    # Afficher le message de bienvenue à la première interaction
     if not greeted:
         msg.body(get_welcome_message())
-        conn = sqlite3.connect("askely.db")
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET greeted = 1 WHERE phone_hash = ?", (phone_hash,))
-        conn.commit()
-        conn.close()
+        mark_greeted(phone_hash)
         return str(response)
 
+    # Corriger le message de l'utilisateur
     incoming_msg = corriger_message(incoming_msg)
 
+    # Commande menu
     if incoming_msg.lower() in ["menu", "aide"]:
         msg.body(get_main_menu())
         return str(response)
 
+    # Voir tous les avis
     if "voir tous les avis" in incoming_msg.lower():
         reviews = get_public_reviews()
         avis = "\n".join([f"{r[0]} ⭐{r[1]} – {r[2]}" for r in reviews])
         msg.body(f"📋 Avis récents :\n{avis}")
         return str(response)
 
+    # Voir mon profil
     if "mon profil" in incoming_msg.lower() or "mes points" in incoming_msg.lower():
         conn = sqlite3.connect("askely.db")
         cursor = conn.cursor()
         cursor.execute("SELECT points, created_at FROM users WHERE phone_hash = ?", (phone_hash,))
         row = cursor.fetchone()
-        msg.body(f"👤 *Profil utilisateur Askely*\n📅 Inscrit depuis : {row[1][:10]}\n🏆 Points : {row[0]}")
+        conn.close()
+        points = row[0]
+        inscrit = row[1][:10]
+        msg.body(f"👤 *Profil utilisateur Askely*\n📅 Inscrit depuis : {inscrit}\n🏆 Points : {points}")
         return str(response)
 
+    # Évaluations
     review_type, rating, comment = parse_evaluation_message(incoming_msg)
     if review_type:
-        points_map = {"vol": 10, "hôtel": 7, "restaurant": 5, "fidélité": 3}
+        points_map = {"vol": 10, "hôtel": 7, "restaurant": 5, "fidélité": 8}
         save_review(phone_hash, review_type, rating, comment)
-        new_points = add_points(phone_hash, points_map.get(review_type, 0))
-        msg.body(f"✅ Merci pour votre avis sur le {review_type} !\n⭐ Note : {rating}\n📝 Commentaire : {comment}\n🎉 Vous avez gagné {points_map[review_type]} points.\n🏆 Total : {new_points} points.")
-        last_reviews = get_last_reviews(phone_hash)
-        if last_reviews:
-            msg.body("\n📋 Vos derniers avis :\n" + "\n".join([f"{r[0]} ⭐{r[1]} – {r[2]}" for r in last_reviews]))
+        earned = points_map.get(review_type, 0)
+        total = add_points(phone_hash, earned)
+        msg.body(f"✅ Merci pour votre avis sur le {review_type} !\n⭐ Note : {rating}\n📝 Commentaire : {comment}\n\n🎉 Vous avez gagné {earned} points.\n🏆 Total : {total} points.")
+        reviews = get_last_reviews(phone_hash)
+        if reviews:
+            msg.body("\n📋 Vos derniers avis :\n" + "\n".join([f"{r[0]} ⭐{r[1]} – {r[2]}" for r in reviews]))
             msg.body("🔗 Voir tous les avis")
         return str(response)
 
-    if m := re.search(r"h[oô]tel[s]? à ([\w\s\-]+)", incoming_msg, re.IGNORECASE):
-        msg.body(search_hotels(m.group(1).strip()))
+    # Recherche hôtel
+    hotel_match = re.search(r"h[oô]tel[s]? à ([\w\s\-]+)", incoming_msg, re.IGNORECASE)
+    if hotel_match:
+        city = hotel_match.group(1).strip()
+        msg.body(search_hotels(city))
         return str(response)
 
-    if m := re.search(r"restaurant[s]? à ([\w\s\-]+)", incoming_msg, re.IGNORECASE):
-        msg.body(search_restaurants(m.group(1).strip()))
+    # Recherche restaurant
+    resto_match = re.search(r"restaurant[s]? à ([\w\s\-]+)", incoming_msg, re.IGNORECASE)
+    if resto_match:
+        city = resto_match.group(1).strip()
+        msg.body(search_restaurants(city))
         return str(response)
 
-    if m := re.search(r"vol de ([\w\s\-]+) vers ([\w\s\-]+)", incoming_msg, re.IGNORECASE):
-        msg.body(search_flights(m.group(1).strip(), m.group(2).strip()))
+    # Recherche vol
+    vol_match = re.search(r"vol de ([\w\s\-]+) vers ([\w\s\-]+)", incoming_msg, re.IGNORECASE)
+    if vol_match:
+        origine = vol_match.group(1).strip()
+        destination = vol_match.group(2).strip()
+        msg.body(search_flights(origine, destination))
         return str(response)
 
-    if m := re.search(r"plan à ([\w\s\-]+)", incoming_msg, re.IGNORECASE):
-        msg.body(generate_travel_plan(m.group(1).strip()))
+    # Plan touristique
+    plan_match = re.search(r"plan à ([\w\s\-]+)", incoming_msg, re.IGNORECASE)
+    if plan_match:
+        city = plan_match.group(1).strip()
+        msg.body(generate_travel_plan(city))
         return str(response)
 
-    if m := re.search(r"bons plans au ([\w\s\-]+)", incoming_msg, re.IGNORECASE):
-        msg.body(get_travel_deals(m.group(1).strip()))
+    # Bons plans
+    deals_match = re.search(r"bons plans au ([\w\s\-]+)", incoming_msg, re.IGNORECASE)
+    if deals_match:
+        country = deals_match.group(1).strip()
+        msg.body(get_travel_deals(country))
         return str(response)
 
+    # Réclamation bagage
     if "bagage" in incoming_msg.lower():
-        msg.body("🧳 Pour une réclamation de bagage, veuillez contacter la compagnie avec votre numéro de vol. Je peux vous aider à rédiger une réclamation.")
+        msg.body("🧳 Pour une réclamation de bagage, veuillez contacter la compagnie avec votre numéro de vol. Si vous avez besoin d’aide pour rédiger un message officiel, je peux vous aider.")
         return str(response)
 
+    # Question libre traitée par GPT-4o
     try:
-        gpt = openai.ChatCompletion.create(
+        reply = openai.ChatCompletion.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Tu es Askely, un assistant de voyage multilingue."},
+                {"role": "system", "content": "Tu es Askely, un assistant de voyage intelligent et multilingue."},
                 {"role": "user", "content": incoming_msg}
             ],
-            max_tokens=200
+            max_tokens=250
         )
-        msg.body(gpt.choices[0].message["content"])
+        msg.body(reply.choices[0].message["content"])
     except:
         msg.body("❌ Erreur avec l’intelligence artificielle. Veuillez réessayer plus tard.")
 
     return str(response)
 
-# ------------------ LANCEMENT ------------------
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 10000))
