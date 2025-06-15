@@ -1,3 +1,4 @@
+
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 import openai
@@ -55,10 +56,37 @@ def create_user_profile(phone_number, country="unknown", language="unknown"):
     conn.commit()
     conn.close()
     return user_id
-def get_recent_reviews(n=3):
+
+def add_points(phone_hash, amount):
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT type, rating, comment, created_at FROM reviews ORDER BY created_at DESC LIMIT ?", (n,))
+    cursor.execute("UPDATE users SET points = points + ? WHERE phone_hash = ?", (amount, phone_hash))
+    cursor.execute("SELECT points FROM users WHERE phone_hash = ?", (phone_hash,))
+    points = cursor.fetchone()[0]
+    conn.commit()
+    conn.close()
+    return points
+
+def save_review(phone_hash, review_type, rating, comment):
+    conn = sqlite3.connect("askely.db")
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO reviews (phone_hash, type, rating, comment) VALUES (?, ?, ?, ?)",
+                   (phone_hash, review_type, rating, comment))
+    conn.commit()
+    conn.close()
+
+def get_last_reviews(phone_hash, n=3):
+    conn = sqlite3.connect("askely.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT type, rating, comment FROM reviews WHERE phone_hash = ? ORDER BY created_at DESC LIMIT ?", (phone_hash, n))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def get_public_reviews(n=5):
+    conn = sqlite3.connect("askely.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT type, rating, comment FROM reviews ORDER BY created_at DESC LIMIT ?", (n,))
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -93,3 +121,9 @@ def generate_travel_plan(city):
 
 def get_travel_deals(country):
     return f"💡 Bons plans au {country} :\n- Réductions hébergement\n- Activités gratuites\n- Transports locaux pas chers"
+
+
+if __name__ == "__main__":
+    init_db()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(debug=True, host="0.0.0.0", port=port)
