@@ -1,0 +1,6 @@
+
+flask
+requests
+twilio
+openai==0.28.1
+
