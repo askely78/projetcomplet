@@ -24,6 +24,16 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS avis (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phone_hash TEXT,
+            category TEXT,
+            review TEXT,
+            rating INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -46,16 +56,20 @@ def create_user_profile(phone_number, country="unknown", language="unknown"):
     conn.close()
     return user_id
 
-def add_points_to_user(phone_number, points=1):
+def is_new_user(phone_number):
     phone_hash = hash_phone_number(phone_number)
     conn = sqlite3.connect("askely.db")
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET points = points + ? WHERE phone_hash = ?", (points, phone_hash))
-    cursor.execute("SELECT points FROM users WHERE phone_hash = ?", (phone_hash,))
-    new_points = cursor.fetchone()[0]
-    conn.commit()
+    cursor.execute("SELECT created_at FROM users WHERE phone_hash = ?", (phone_hash,))
+    row = cursor.fetchone()
     conn.close()
-    return new_points
+    if not row:
+        return False
+    try:
+        created_time = datetime.fromisoformat(row[0])
+        return (datetime.now(timezone.utc) - created_time).total_seconds() < 15
+    except Exception:
+        return False
 
 def corriger_message(msg):
     try:
@@ -71,25 +85,35 @@ def corriger_message(msg):
     except Exception:
         return msg
 
-def search_hotels(city):
-    hotels = [f"{city} Palace", f"Riad {city} Medina", f"Dar Atlas {city}", f"Luxury Stay {city}", f"Hotel Central {city}"]
-    return "\n".join([f"🏨 Hôtels à {city} :"] + [f"{i+1}. {h}" for i, h in enumerate(hotels)])
+def add_points_for_review(category):
+    return {
+        "vol": 50,
+        "hotel": 40,
+        "restaurant": 30,
+        "fidelite": 20
+    }.get(category.lower(), 0)
 
-def search_restaurants(city):
-    restos = [f"{city} Gourmet", f"Bistro {city}", f"Chez {city}", f"La Table {city}", f"Café Medina"]
-    return "\n".join([f"🍽️ Restaurants à {city} :"] + [f"{i+1}. {r}" for i, r in enumerate(restos)])
+def add_review(phone_number, category, rating, review_text):
+    phone_hash = hash_phone_number(phone_number)
+    conn = sqlite3.connect("askely.db")
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO avis (phone_hash, category, rating, review) VALUES (?, ?, ?, ?)",
+                   (phone_hash, category, rating, review_text))
+    cursor.execute("UPDATE users SET points = points + ? WHERE phone_hash = ?",
+                   (add_points_for_review(category), phone_hash))
+    cursor.execute("SELECT points FROM users WHERE phone_hash = ?", (phone_hash,))
+    new_points = cursor.fetchone()[0]
+    conn.commit()
+    conn.close()
+    return new_points
 
-def search_flights(origin, destination):
-    return f"✈️ Vols de {origin} à {destination} :\n1. RAM 08h00\n2. Air Arabia 13h30\n3. Transavia 19h00"
-
-def generate_baggage_claim():
-    return "📄 Réclamation : Bagage perdu ou endommagé. Veuillez traiter cette demande dès que possible."
-
-def generate_travel_plan(city):
-    return f"🗺️ Plan de voyage à {city} :\n- Jour 1 : visite guidée\n- Jour 2 : cuisine locale\n- Jour 3 : détente & shopping"
-
-def get_travel_deals(country):
-    return f"💡 Bons plans au {country} :\n- Réductions hébergement\n- Activités gratuites\n- Transports locaux pas chers"
+def get_last_reviews():
+    conn = sqlite3.connect("askely.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT category, rating, review, created_at FROM avis ORDER BY created_at DESC LIMIT 3")
+    rows = cursor.fetchall()
+    conn.close()
+    return "\n\n".join([f"⭐ {r[1]}/5 | {r[0].capitalize()} : {r[2]}" for r in rows])
 
 @app.route("/webhook/whatsapp-webhook", methods=["POST"])
 def whatsapp_webhook():
@@ -99,8 +123,25 @@ def whatsapp_webhook():
     language = "auto"
 
     create_user_profile(phone_number, country, language)
-    corrected_msg = corriger_message(incoming_msg)
-    msg_lower = corrected_msg.lower()
+
+    if is_new_user(phone_number):
+        welcome = (
+            "🎉 *Bienvenue sur Askely, votre assistant de voyage intelligent !* 🤖\n"
+            "Voici ce que je peux faire pour vous :\n\n"
+            "📍 *Recherches rapides* : hôtels, restaurants, vols, bagages, bons plans\n"
+            "📝 *Gagnez des points* en tapant :\n"
+            " - avis vol 5/5 très bon vol\n"
+            " - avis hôtel 4/5 calme et propre\n"
+            " - avis restaurant 3/5 bon mais lent\n"
+            " - avis fidélité 5/5 programme utile\n\n"
+            "👤 Tapez *mon profil* ou *mes points* pour consulter vos points\n"
+            "📢 Tapez *tous les avis* pour voir les retours des autres utilisateurs"
+        )
+        resp = MessagingResponse()
+        resp.message(welcome)
+        return str(resp)
+
+    msg_lower = corriger_message(incoming_msg.lower())
 
     if "mon profil" in msg_lower or "mes points" in msg_lower:
         phone_hash = hash_phone_number(phone_number)
@@ -113,70 +154,35 @@ def whatsapp_webhook():
             user_id, points, created_at = data
             msg = f"👤 *Votre Profil Askely*\n⭐ Points : {points}\n🗓️ Depuis : {created_at[:10]}"
         else:
-            msg = "Aucun profil trouvé. Essayez d’interagir d’abord avec Askely."
+            msg = "Aucun profil trouvé."
         resp = MessagingResponse()
         resp.message(msg)
         return str(resp)
 
-    match_hotel = re.search(r"h[oô]tel(?: à| a)? ([\w\s\-]+)", msg_lower)
-    if match_hotel:
-        city = match_hotel.group(1).title()
-        result = search_hotels(city)
-        points = add_points_to_user(phone_number, 1)
+    if "tous les avis" in msg_lower:
+        avis = get_last_reviews()
         resp = MessagingResponse()
-        resp.message(f"{result}\n🎁 +1 point Askely ! Total : {points}\n📌 Tapez *mon profil* pour consulter vos points.")
+        resp.message(f"🗣️ *Derniers avis utilisateurs :*\n\n{avis}")
         return str(resp)
 
-    match_restaurant = re.search(r"restaurant(?: à| a)? ([\w\s\-]+)", msg_lower)
-    if match_restaurant:
-        city = match_restaurant.group(1).title()
-        result = search_restaurants(city)
-        points = add_points_to_user(phone_number, 1)
+    match_avis = re.search(r"avis (vol|h[oô]tel|restaurant|fid[eé]lit[eé]) ?(\d)/5 (.+)", msg_lower)
+    if match_avis:
+        cat = match_avis.group(1)
+        if "hôtel" in cat or "hô" in cat: cat = "hotel"
+        if "fid" in cat: cat = "fidelite"
+        rating = int(match_avis.group(2))
+        text = match_avis.group(3)
+        points = add_review(phone_number, cat, rating, text)
         resp = MessagingResponse()
-        resp.message(f"{result}\n🎁 +1 point Askely ! Total : {points}\n📌 Tapez *mon profil* pour consulter vos points.")
-        return str(resp)
-
-    match_flight = re.search(r"vol(?: de)? ([\w\s]+) vers ([\w\s]+)", msg_lower)
-    if match_flight:
-        origin = match_flight.group(1).title()
-        destination = match_flight.group(2).title()
-        result = search_flights(origin, destination)
-        points = add_points_to_user(phone_number, 1)
-        resp = MessagingResponse()
-        resp.message(f"{result}\n🎁 +1 point Askely ! Total : {points}\n📌 Tapez *mon profil* pour consulter vos points.")
-        return str(resp)
-
-    if "bagage" in msg_lower or "réclamation" in msg_lower:
-        result = generate_baggage_claim()
-        points = add_points_to_user(phone_number, 2)
-        resp = MessagingResponse()
-        resp.message(f"{result}\n🎁 +2 points Askely ! Total : {points}\n📌 Tapez *mon profil* pour consulter vos points.")
-        return str(resp)
-
-    match_plan = re.search(r"(plan|itinéraire)(?: à| pour)? ([\w\s\-]+)", msg_lower)
-    if match_plan:
-        city = match_plan.group(2).title()
-        result = generate_travel_plan(city)
-        points = add_points_to_user(phone_number, 2)
-        resp = MessagingResponse()
-        resp.message(f"{result}\n🎁 +2 points Askely ! Total : {points}\n📌 Tapez *mon profil* pour consulter vos points.")
-        return str(resp)
-
-    match_deal = re.search(r"bons? plans? (?:au|en|dans le)? ([\w\s\-]+)", msg_lower)
-    if match_deal:
-        country = match_deal.group(1).title()
-        result = get_travel_deals(country)
-        points = add_points_to_user(phone_number, 1)
-        resp = MessagingResponse()
-        resp.message(f"{result}\n🎁 +1 point Askely ! Total : {points}\n📌 Tapez *mon profil* pour consulter vos points.")
+        resp.message(f"✅ Avis enregistré pour {cat} ({rating}/5)\n🎁 +{add_points_for_review(cat)} points Askely ! Total : {points}\n📌 Tapez *mon profil* ou *tous les avis*.")
         return str(resp)
 
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "Tu es Askely, un agent de conciergerie de voyage intelligent et utile."},
-                {"role": "user", "content": corrected_msg}
+                {"role": "system", "content": "Tu es Askely, un assistant de voyage intelligent."},
+                {"role": "user", "content": incoming_msg}
             ],
             max_tokens=300
         )
@@ -184,9 +190,8 @@ def whatsapp_webhook():
     except Exception:
         answer = "⚠️ Erreur GPT. Réessayez plus tard."
 
-    points = add_points_to_user(phone_number, 1)
     resp = MessagingResponse()
-    resp.message(f"{answer}\n🎁 +1 point Askely ! Total : {points}\n📌 Tapez *mon profil* pour consulter vos points.")
+    resp.message(f"{answer}\n📌 Tapez *mon profil* pour consulter vos points.")
     return str(resp)
 
 if __name__ == "__main__":
